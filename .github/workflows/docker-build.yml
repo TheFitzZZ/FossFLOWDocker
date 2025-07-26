@@ -1,0 +1,210 @@
+name: Build and Push FossFLOW Docker Image
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Build daily at 2 AM UTC to get latest from upstream
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+env:
+  DOCKER_HUB_USERNAME: fitzzz
+  DOCKER_HUB_REPO: fossflow
+  UPSTREAM_REPO: stan-smith/FossFLOW
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout this repository
+      uses: actions/checkout@v4
+      
+    - name: Checkout upstream FossFLOW repository
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ env.UPSTREAM_REPO }}
+        path: fossflow-source
+        fetch-depth: 0
+        
+    - name: Get upstream commit info
+      id: upstream-info
+      run: |
+        cd fossflow-source
+        echo "commit_sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+        echo "commit_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        echo "commit_date=$(git log -1 --format=%cd --date=iso)" >> $GITHUB_OUTPUT
+        echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+        
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ env.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_TOKEN }}
+        
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_HUB_REPO }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value={{date 'YYYY-MM-DD'}}
+          type=raw,value=upstream-${{ steps.upstream-info.outputs.commit_short }}
+        labels: |
+          org.opencontainers.image.title=FossFLOW
+          org.opencontainers.image.description=Isometric diagram creation tool - Docker build from stan-smith/FossFLOW
+          org.opencontainers.image.vendor=TheFitzZZ
+          org.opencontainers.image.source=https://github.com/${{ env.UPSTREAM_REPO }}
+          org.opencontainers.image.documentation=https://github.com/${{ env.UPSTREAM_REPO }}#readme
+          fossflow.upstream.repo=${{ env.UPSTREAM_REPO }}
+          fossflow.upstream.commit=${{ steps.upstream-info.outputs.commit_sha }}
+          fossflow.upstream.branch=${{ steps.upstream-info.outputs.branch }}
+          fossflow.upstream.date=${{ steps.upstream-info.outputs.commit_date }}
+          
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./fossflow-source
+        file: ./fossflow-source/Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Update README with build info
+      run: |
+        cat > README.md << 'EOF'
+        # FossFLOW Docker Images
+        
+        This repository automatically builds Docker images from the [stan-smith/FossFLOW](https://github.com/stan-smith/FossFLOW) repository and publishes them to Docker Hub.
+        
+        ## Latest Build Information
+        
+        - **Upstream Repository**: `${{ env.UPSTREAM_REPO }}`
+        - **Upstream Commit**: `${{ steps.upstream-info.outputs.commit_sha }}`
+        - **Upstream Branch**: `${{ steps.upstream-info.outputs.branch }}`
+        - **Build Date**: `$(date -u)`
+        - **Docker Hub Repository**: [`${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_HUB_REPO }}`](https://hub.docker.com/r/${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_HUB_REPO }})
+        
+        ## Available Tags
+        
+        - `latest` - Latest build from main branch
+        - `YYYY-MM-DD` - Daily builds
+        - `upstream-{short-sha}` - Builds tagged with upstream commit
+        - `main-{sha}` - Builds from main branch with full commit SHA
+        
+        ## Usage
+        
+        ### Quick Start
+        
+        ```bash
+        # Run the latest version
+        docker run -d -p 3000:3000 ${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_HUB_REPO }}:latest
+        ```
+        
+        ### Docker Compose
+        
+        ```yaml
+        version: '3.8'
+        services:
+          fossflow:
+            image: ${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_HUB_REPO }}:latest
+            ports:
+              - "3000:3000"
+            restart: unless-stopped
+        ```
+        
+        ### Advanced Usage
+        
+        ```bash
+        # Run with custom port
+        docker run -d -p 8080:3000 ${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_HUB_REPO }}:latest
+        
+        # Run specific version
+        docker run -d -p 3000:3000 ${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_HUB_REPO }}:upstream-${{ steps.upstream-info.outputs.commit_short }}
+        ```
+        
+        ## About FossFLOW
+        
+        FossFLOW is a powerful, open-source Progressive Web App (PWA) for creating beautiful isometric diagrams. Built with React and the Isoflow library, it runs entirely in your browser with offline support.
+        
+        ### Features
+        
+        - 🎨 **Isometric Diagramming** - Create stunning 3D-style technical diagrams
+        - 💾 **Auto-Save** - Your work is automatically saved every 5 seconds
+        - 📱 **PWA Support** - Install as a native app on Mac and Linux
+        - 🔒 **Privacy-First** - All data stored locally in your browser
+        - 📤 **Import/Export** - Share diagrams as JSON files
+        - 🎯 **Session Storage** - Quick save without dialogs
+        - 🌐 **Offline Support** - Work without internet connection
+        
+        ## Automated Builds
+        
+        This repository:
+        
+        - ✅ Automatically builds when upstream changes are detected
+        - ✅ Builds daily to ensure latest dependencies
+        - ✅ Supports both AMD64 and ARM64 architectures
+        - ✅ Uses GitHub Actions for CI/CD
+        - ✅ Provides multiple tagging strategies
+        
+        ## Development & Contributing
+        
+        This is purely a Docker packaging repository. For development and contributions to FossFLOW itself, please visit the [upstream repository](https://github.com/${{ env.UPSTREAM_REPO }}).
+        
+        ## License
+        
+        FossFLOW is released under the Unlicense license. See the [upstream repository](https://github.com/${{ env.UPSTREAM_REPO }}) for license details.
+        
+        ## Support
+        
+        For issues related to FossFLOW functionality, please open issues in the [upstream repository](https://github.com/${{ env.UPSTREAM_REPO }}/issues).
+        
+        For Docker-specific issues with these images, please open issues in this repository.
+        EOF
+        
+    - name: Commit and push README updates
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add README.md
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update README with latest build info [skip ci]"
+          git push
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Create summary
+      run: |
+        echo "## 🚀 Build Complete!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Docker Image Information" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository**: \`${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_HUB_REPO }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Tags**: \`${{ steps.meta.outputs.tags }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Platforms**: \`linux/amd64, linux/arm64\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Upstream Source" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository**: [\`${{ env.UPSTREAM_REPO }}\`](https://github.com/${{ env.UPSTREAM_REPO }})" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: \`${{ steps.upstream-info.outputs.commit_sha }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: \`${{ steps.upstream-info.outputs.branch }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Quick Usage" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+        echo "docker run -d -p 3000:3000 ${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_HUB_REPO }}:latest" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

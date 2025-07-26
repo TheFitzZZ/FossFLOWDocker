@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  fossflow:
+    image: fitzzz/fossflow:latest
+    container_name: fossflow
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Alternative configuration with custom port
+  # fossflow-custom:
+  #   image: fitzzz/fossflow:latest
+  #   container_name: fossflow-custom
+  #   ports:
+  #     - "8080:3000"
+  #   restart: unless-stopped
+  #   environment:
+  #     - NODE_ENV=production
